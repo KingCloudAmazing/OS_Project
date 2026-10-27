@@ -23,6 +23,7 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int setworkflow(int wid, int deadline_ticks);
 
 // ulib.c
 int stat(const char*, struct stat*);

@@ -89,3 +89,21 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+int
+sys_setworkflow(void)
+{
+  int wid;
+  int deadline_ticks;
+  struct proc *p = myproc();
+
+  argint(0, &wid);
+  argint(1, &deadline_ticks);
+
+  if (wid < 0)
+    return -1;
+
+  p->wid = wid;
+  p->deadline = (uint)deadline_ticks;
+
+  return 0;
+}
