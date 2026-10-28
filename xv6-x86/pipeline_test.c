@@ -90,7 +90,7 @@ int main(int argc, char *argv[]) {
         uint abs_deadline = start_tick + deadline_duration;
 
         // Assign deadline (WID=1, absolute deadline tick)
-        //setworkflow(1, abs_deadline);
+        setworkflow(1, abs_deadline);
 
         char token;
         read(p3[0], &token, 1); // Blocks until Stage 3 writes
