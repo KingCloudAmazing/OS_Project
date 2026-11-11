@@ -274,6 +274,17 @@ exit(void)
     }
   }
 
+  // Clean up priority donation dependencies
+  if(curproc->waiting_on != 0){
+    curproc->waiting_on = 0;
+  }
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->waiting_on == curproc)
+      p->waiting_on = 0;
+  }
+  curproc->donated_deadline = NO_DEADLINE;
+  recompute_donations_locked();
+
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
   sched();
@@ -307,6 +318,10 @@ wait(void)
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
+        p->wid = 0;
+        p->deadline = NO_DEADLINE;
+        p->donated_deadline = NO_DEADLINE;
+        p->waiting_on = 0;
         p->state = UNUSED;
         release(&ptable.lock);
         return pid;
@@ -348,30 +363,42 @@ proc_effective_deadline(struct proc *p)
 }
 
 // Recompute donated deadlines across all processes in ptable.
+// Propagates transitively across dependency chains until fixed point or bounded NPROC iterations.
 // Requires ptable.lock to be held.
 static void
 recompute_donations_locked(void)
 {
+  int changed;
+  int iter;
   struct proc *p;
   struct proc *w;
 
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->state == UNUSED)
-      continue;
-
-    uint min_donated = NO_DEADLINE;
-    for(w = ptable.proc; w < &ptable.proc[NPROC]; w++){
-      if(w->state == UNUSED || w->state == ZOMBIE)
+  for(iter = 0; iter < NPROC; iter++){
+    changed = 0;
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state == UNUSED)
         continue;
-      if(w->waiting_on == p){
-        uint w_eff = proc_effective_deadline(w);
-        if(w_eff != NO_DEADLINE){
-          if(min_donated == NO_DEADLINE || w_eff < min_donated)
-            min_donated = w_eff;
+
+      uint min_donated = NO_DEADLINE;
+      for(w = ptable.proc; w < &ptable.proc[NPROC]; w++){
+        if(w->state == UNUSED || w->state == ZOMBIE)
+          continue;
+        if(w->waiting_on == p){
+          uint w_eff = proc_effective_deadline(w);
+          if(w_eff != NO_DEADLINE){
+            if(min_donated == NO_DEADLINE || w_eff < min_donated)
+              min_donated = w_eff;
+          }
         }
       }
+
+      if(p->donated_deadline != min_donated){
+        p->donated_deadline = min_donated;
+        changed = 1;
+      }
     }
-    p->donated_deadline = min_donated;
+    if(!changed)
+      break;
   }
 }
 
@@ -386,6 +413,16 @@ proc_set_waiting_on_locked(struct proc *waiter, struct proc *owner)
     return -1;
   if(owner->state == UNUSED || owner->state == ZOMBIE)
     return -1;
+
+  // Cycle detection: traverse owner's waiting_on dependency chain
+  struct proc *curr = owner;
+  int count = 0;
+  while(curr != 0 && count < NPROC){
+    if(curr == waiter)
+      return -1; // Cycle detected: reject dependency
+    curr = curr->waiting_on;
+    count++;
+  }
 
   waiter->waiting_on = owner;
   recompute_donations_locked();
