@@ -90,6 +90,17 @@ ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fno-pie -nopie
 endif
 
+# Scheduler mode configuration:
+# 0 = Round-Robin (SCHED_RR, default)
+# 1 = Earliest Deadline First (SCHED_EDF)
+# 2 = EDF with Priority Donation (SCHED_EDF_DONATE)
+SCHED_MODE ?= 0
+CFLAGS += -DSCHED_MODE=$(SCHED_MODE)
+
+# Rewrite .sched_mode only when the mode changes, and make every object
+# depend on it, so switching SCHED_MODE rebuilds without "make clean".
+$(shell echo $(SCHED_MODE) | cmp -s - .sched_mode || echo $(SCHED_MODE) > .sched_mode)
+
 xv6.img: bootblock kernel
 	dd if=/dev/zero of=xv6.img count=10000
 	dd if=bootblock of=xv6.img conv=notrunc
@@ -185,6 +196,7 @@ UPROGS=\
         _workflowtest\
 	_pipeline_test\
 	_tainttest\
+	_edftest\
 
 GUESTFILES = report.txt inbox.txt important.txt
 
@@ -193,11 +205,13 @@ fs.img: mkfs README $(GUESTFILES) $(UPROGS)
 
 -include *.d
 
-clean: 
+$(OBJS) entry.o $(ULIB) $(patsubst _%,%.o,$(UPROGS)): .sched_mode
+
+clean:
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 	*.o *.d *.asm *.sym vectors.S bootblock entryother \
 	initcode initcode.out kernel xv6.img fs.img kernelmemfs \
-	xv6memfs.img mkfs .gdbinit \
+	xv6memfs.img mkfs .gdbinit .sched_mode \
 	$(UPROGS)
 
 # make a printout
