@@ -13,6 +13,7 @@ struct {
 } ptable;
 
 static struct proc *initproc;
+static int last_sched_idx = 0;
 
 int nextpid = 1;
 extern void forkret(void);
@@ -112,6 +113,9 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
+  p->wid = 0;
+  p->deadline = NO_DEADLINE;
+
   return p;
 }
 
@@ -199,6 +203,8 @@ fork(void)
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
+  np->wid = curproc->wid;
+  np->deadline = curproc->deadline;
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -312,6 +318,13 @@ wait(void)
 }
 
 //PAGEBREAK: 42
+// Calculate effective deadline of process p
+uint
+proc_effective_deadline(struct proc *p)
+{
+  return p->deadline;
+}
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -352,19 +365,56 @@ scheduler(void)
       c->proc = 0;
     }
 #else
-    // Placeholder for SCHED_EDF and SCHED_EDF_DONATE (implemented in Phase 2)
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+    {
+      struct proc *best_p = 0;
+      uint best_d = NO_DEADLINE;
+      int best_idx = -1;
+      int i;
 
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+      for(i = 0; i < NPROC; i++){
+        int idx = (last_sched_idx + 1 + i) % NPROC;
+        p = &ptable.proc[idx];
+        if(p->state != RUNNABLE)
+          continue;
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
+        uint d = proc_effective_deadline(p);
 
-      c->proc = 0;
+        if(best_p == 0){
+          best_p = p;
+          best_d = d;
+          best_idx = idx;
+        } else {
+          // If both have valid deadlines, earlier deadline wins
+          if(d != NO_DEADLINE && best_d != NO_DEADLINE){
+            if(d < best_d){
+              best_p = p;
+              best_d = d;
+              best_idx = idx;
+            }
+          }
+          // Process p has a deadline, but best_p does not: p wins
+          else if(d != NO_DEADLINE && best_d == NO_DEADLINE){
+            best_p = p;
+            best_d = d;
+            best_idx = idx;
+          }
+          // Ties and no-deadline pairs are broken fairly by rotating order (best_p retained)
+        }
+      }
+
+      if(best_p != 0){
+        p = best_p;
+        last_sched_idx = best_idx;
+
+        c->proc = p;
+        switchuvm(p);
+        p->state = RUNNING;
+
+        swtch(&(c->scheduler), p->context);
+        switchkvm();
+
+        c->proc = 0;
+      }
     }
 #endif
     release(&ptable.lock);
