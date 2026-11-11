@@ -90,6 +90,13 @@ ifneq ($(shell $(CC) -dumpspecs 2>/dev/null | grep -e '[^f]nopie'),)
 CFLAGS += -fno-pie -nopie
 endif
 
+# Scheduler mode configuration:
+# 0 = Round-Robin (SCHED_RR, default)
+# 1 = Earliest Deadline First (SCHED_EDF)
+# 2 = EDF with Priority Donation (SCHED_EDF_DONATE)
+SCHED_MODE ?= 0
+CFLAGS += -DSCHED_MODE=$(SCHED_MODE)
+
 xv6.img: bootblock kernel
 	dd if=/dev/zero of=xv6.img count=10000
 	dd if=bootblock of=xv6.img conv=notrunc
