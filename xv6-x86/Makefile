@@ -184,9 +184,12 @@ UPROGS=\
 	_mytest\
         _workflowtest\
 	_pipeline_test\
+	_tainttest\
 
-fs.img: mkfs README $(UPROGS)
-	./mkfs fs.img README $(UPROGS)
+GUESTFILES = report.txt inbox.txt important.txt
+
+fs.img: mkfs README $(GUESTFILES) $(UPROGS)
+	./mkfs fs.img README $(GUESTFILES) $(UPROGS)
 
 -include *.d
 
