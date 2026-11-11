@@ -24,6 +24,9 @@ char* sbrk(int);
 int sleep(int);
 int uptime(void);
 int setworkflow(int wid, int deadline_ticks);
+int set_waiting_on(int target_pid);
+int clear_waiting_on(void);
+int get_effective_deadline(int pid);
 
 // ulib.c
 int stat(const char*, struct stat*);

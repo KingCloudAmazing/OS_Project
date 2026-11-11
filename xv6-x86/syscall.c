@@ -104,6 +104,9 @@ extern int sys_wait(void);
 extern int sys_write(void);
 extern int sys_uptime(void);
 extern int sys_setworkflow(void);
+extern int sys_set_waiting_on(void);
+extern int sys_clear_waiting_on(void);
+extern int sys_get_effective_deadline(void);
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -128,6 +131,9 @@ static int (*syscalls[])(void) = {
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
 [SYS_setworkflow] sys_setworkflow,
+[SYS_set_waiting_on] sys_set_waiting_on,
+[SYS_clear_waiting_on] sys_clear_waiting_on,
+[SYS_get_effective_deadline] sys_get_effective_deadline,
 };
 
 void
