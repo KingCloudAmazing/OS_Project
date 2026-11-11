@@ -34,6 +34,17 @@ struct context {
 
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+// Scheduler modes
+#define SCHED_RR          0
+#define SCHED_EDF         1
+#define SCHED_EDF_DONATE  2
+
+#ifndef SCHED_MODE
+#define SCHED_MODE SCHED_RR
+#endif
+
+#define NO_DEADLINE 0
+
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -52,6 +63,8 @@ struct proc {
   int wid;
   uint deadline;
   int tainted;                 // Has read untrusted data (see sys_untrust)
+  uint donated_deadline;
+  struct proc *waiting_on;
 };
 
 // Process memory is laid out contiguously, low addresses first:

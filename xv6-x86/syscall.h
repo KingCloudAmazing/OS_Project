@@ -22,3 +22,6 @@
 #define SYS_close  21
 #define SYS_setworkflow 23
 #define SYS_untrust 27
+#define SYS_set_waiting_on 24
+#define SYS_clear_waiting_on 25
+#define SYS_get_effective_deadline 26

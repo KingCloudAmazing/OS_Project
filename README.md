@@ -3,9 +3,10 @@
 An operating-systems course project built on **xv6** (the MIT teaching OS, x86
 version). It extends the kernel along two lines:
 
-1. **Workflow and deadline awareness.** Processes can declare which workflow they
-   belong to and the deadline they must meet, as groundwork for a deadline-driven
-   (EDF) scheduler.
+1. **Deadline-aware scheduling.** Processes declare which workflow they belong to
+   and the deadline they must meet. An **Earliest-Deadline-First (EDF) scheduler**
+   runs the most urgent process first, and **transitive deadline donation** speeds
+   up the processes an urgent one is waiting on, including through pipes.
 2. **A safe host-side AI agent.** A Python agent on the host answers file requests
    by running approved commands inside xv6 under QEMU. It is protected against
    prompt injection twice: by a strict validator in Python, and by **kernel taint
@@ -33,7 +34,7 @@ flowchart LR
 - [Quick start](#quick-start)
 - [Components](#components)
   - [setworkflow() system call](#1-setworkflow-system-call)
-  - [Pipeline workload test](#2-pipeline-workload-test)
+  - [EDF scheduler, deadline donation and pipeline benchmark](#2-edf-scheduler-deadline-donation-and-pipeline-benchmark)
   - [AI agent](#3-ai-agent)
   - [Kernel taint tracking](#4-kernel-taint-tracking)
 - [Testing](#testing)
@@ -49,11 +50,13 @@ flowchart LR
 | Feature | Where | Status |
 |---|---|---|
 | `setworkflow(wid, deadline)` system call | `xv6-x86/sysproc.c` | Merged |
-| Four-stage pipe pipeline benchmark with deadline metrics | `xv6-x86/pipeline_test.c` | Merged |
+| EDF scheduler with three build modes (`SCHED_MODE=0/1/2`) | `xv6-x86/proc.c` | Merged |
+| Transitive deadline donation, including through pipes | `xv6-x86/proc.c`, `xv6-x86/pipe.c` | Merged |
+| `edftest` scheduler and donation test suite | `xv6-x86/edftest.c` | Merged |
+| N-stage pipe pipeline benchmark with deadline metrics | `xv6-x86/pipeline_test.c` | Merged |
 | Python agent: planner → validator → dispatcher → QEMU bridge | `agent/` | Merged |
 | Prompt-injection demonstration that is blocked every run | `agent/planner.py` | Merged |
 | Kernel taint tracking: `untrust()`, taint through `fork()` and pipes, `unlink()` refused | `xv6-x86/` | Merged |
-| EDF scheduler with transitive deadline donation | `feature/generalized-pipeline`, `feature/anhad-edf-donation` | In progress |
 
 ---
 
@@ -73,11 +76,13 @@ OS_Project/
 │   ├── tests/             46 pytest tests
 │   └── logs/              captured demo runs and test results
 └── xv6-x86/               xv6 kernel and user programs
-    ├── sysproc.c          sys_setworkflow
+    ├── proc.c             EDF scheduler and deadline donation
+    ├── sysproc.c          setworkflow and the donation test syscalls
     ├── sysfile.c          sys_untrust and the taint check in sys_unlink
-    ├── file.c, pipe.c     taint propagation on read and through pipes
+    ├── file.c, pipe.c     taint propagation; donation from pipe readers to writers
     ├── workflowtest.c     setworkflow smoke test
-    ├── pipeline_test.c    four-stage pipe pipeline benchmark
+    ├── edftest.c          EDF and donation test suite
+    ├── pipeline_test.c    N-stage pipe pipeline benchmark
     ├── tainttest.c        kernel taint tracking tests
     └── report.txt, inbox.txt, important.txt   guest files for the agent demos
 ```
@@ -100,10 +105,12 @@ OS_Project/
 ```bash
 git clone https://github.com/KingCloudAmazing/OS_Project.git
 cd OS_Project/xv6-x86
-make qemu-nox                       # build, then boot xv6 in this terminal
+make qemu-nox                       # build (round-robin), then boot xv6 in this terminal
+make qemu-nox SCHED_MODE=2          # or: EDF with deadline donation (1 = EDF only)
 ```
 
-At the `$` prompt, try `ls`, `workflowtest`, `pipeline_test` or `tainttest`.
+At the `$` prompt, try `ls`, `workflowtest`, `edftest`, `pipeline_test 4 5000000 200`
+or `tainttest`.
 To quit QEMU, press **`Ctrl-a`**, then **`x`**.
 
 > Add `QEMUEXTRA=-snapshot` (`make qemu-nox QEMUEXTRA=-snapshot`) to throw away the
@@ -136,41 +143,48 @@ Press Enter on an empty line to quit.
 int setworkflow(int wid, int deadline_ticks);
 ```
 
-This records a **workflow ID** and a **deadline** (in timer ticks) in the calling
-process's `struct proc` (`wid`, `deadline`), so a scheduler can later favour
-processes with earlier deadlines. It returns `0` on success, and `-1` if an
-argument can't be read or if `wid` or the deadline is negative. It is syscall number 23, wired through `syscall.h`, `syscall.c`,
-`user.h` and `usys.S`. For debugging, each call prints a kernel log line.
+This records a **workflow ID** and an **absolute deadline** (in timer ticks) in the
+calling process's `struct proc` (`wid`, `deadline`), which the EDF scheduler uses
+to choose which process runs next. It returns `0` on success, and `-1` if an
+argument can't be read or if `wid` or the deadline is negative. It is syscall
+number 23. Both fields are inherited by `fork()` children and reset when a process
+slot is freed.
 
 ```
 $ workflowtest
-setworkflow: pid=4 wid=1 deadline=200
 setworkflow(1, 200) = 0
-setworkflow: pid=4 wid=2 deadline=150
 setworkflow(2, 150) = 0
 setworkflow(-1, 100) = -1 (expect -1)
 setworkflow(3, -5) = -1 (expect -1)
 ```
 
-### 2. Pipeline workload test
+### 2. EDF scheduler, deadline donation and pipeline benchmark
 
-`pipeline_test` is the workload used to evaluate deadline scheduling. It starts
-**four stages connected by pipes** (producer → worker → worker → consumer) plus an
-unrelated **CPU hog**. Each stage burns CPU and then passes a token down the
-pipeline. The final stage sets an absolute deadline with `setworkflow()` and
-reports whether the whole chain finished in time:
+The scheduler is chosen at build time with `make SCHED_MODE=<n>`. Changing the mode
+rebuilds automatically, so no `make clean` is needed.
 
-```
-$ pipeline_test
-Starting Pipeline Test Harness...
-setworkflow: pid=11 wid=1 deadline=217
-[METRICS] Start=17 | End=24 | Target=217 | Elapsed=7 | Missed=0
-Pipeline Test Harness Finished.
-```
+| Mode | Scheduler |
+|---|---|
+| `0` (default) | Original xv6 round-robin |
+| `1` | **EDF**: the runnable process with the earliest deadline runs first. Processes without a deadline run round-robin when no deadline process is runnable |
+| `2` | **EDF with transitive deadline donation**: a process that blocks waiting on another lends it its deadline, `D_effective = min(D_own, D_donated)`. Donations follow chains (stage 4 → 3 → 2 → 1), cycles are rejected, and donations are withdrawn on wake-up and exit |
 
-Under round-robin, the CPU hog competes equally with the pipeline. The EDF
-scheduler and deadline donation (on the feature branches) are meant to let the
-deadline-bound chain finish first.
+A pipe reader that blocks on an empty pipe donates its deadline to the pipe's
+writer (`[PIPE DONATION] Reader 6 -> Writer 7`). The test-only syscalls
+`set_waiting_on`, `clear_waiting_on` and `get_effective_deadline` (24–26) let
+`edftest` set up dependencies directly. `edftest` adapts to the mode it was built
+with: it skips the EDF-order scenario under mode 0.
+
+`pipeline_test <stages> <work> <deadline>` builds an N-stage pipeline connected by
+pipes, plus an unrelated **CPU hog**. Each stage burns CPU and passes a token on,
+and the last stage sets a deadline and reports whether the chain met it. In the
+same run (`pipeline_test 4 5000000 200`, one CPU), donation roughly halves the
+pipeline's time:
+
+| Mode | Result |
+|---|---|
+| `SCHED_MODE=0` | `[METRICS] Start=10 \| End=22 \| Target=210 \| Elapsed=12 \| Missed=0` |
+| `SCHED_MODE=2` | `[METRICS] Start=10 \| End=15 \| Target=210 \| Elapsed=5 \| Missed=0` |
 
 ### 3. AI agent
 
@@ -236,7 +250,8 @@ tainttest done
 |---|---|
 | Full automated suite (46 tests; boots xv6 itself) | `cd agent && python3 -m pytest -v tests` |
 | Kernel taint tests only | `cd agent && python3 -m pytest -v tests/test_agent.py -k kernel` |
-| In-guest programs | `make qemu-nox`, then run `workflowtest`, `pipeline_test` or `tainttest` |
+| Scheduler tests, per mode | `make qemu-nox SCHED_MODE=0` (then `1`, then `2`), and run `edftest` at the prompt |
+| Other in-guest programs | `make qemu-nox`, then run `workflowtest`, `pipeline_test 4 5000000 200` or `tainttest` |
 | Upstream xv6 regression tests | `make qemu-nox`, then run `usertests` (takes a few minutes) |
 
 The suite covers:
@@ -252,21 +267,19 @@ Sample output is in [`agent/logs/`](agent/logs/).
 
 ## Project status
 
-- **`main`** has the `setworkflow()` syscall, the pipeline benchmark, the AI agent
-  and kernel taint tracking.
-- **`feature/generalized-pipeline`** and **`feature/anhad-edf-donation`** (in
-  progress, not merged) add an EDF scheduler with three build-time modes
-  (`make SCHED_MODE=0|1|2`: round-robin, EDF, EDF with transitive deadline
-  donation), the `edftest` suite and an extended pipeline test. They reserve
-  syscalls 24–26.
+All components are merged into `main`: `setworkflow()`, the EDF scheduler with
+deadline donation, `edftest`, the generalized pipeline benchmark, the AI agent and
+kernel taint tracking. `edftest`, `workflowtest`, `tainttest` and the 46 agent tests
+pass under all three scheduler modes.
 
 ---
 
 ## Known limitations
 
-- **setworkflow:** `wid` and `deadline` are not reset when a process slot is reused
-  or copied on `fork()`. Process lifecycle
-  handling is planned together with the scheduler work.
+- **EDF is not starvation-free.** While a CPU-bound process with a deadline is
+  runnable, processes without one (including `sh`) get no CPU on that core. A
+  process that misses its deadline keeps its priority until it sets a new one or
+  exits. The donation test syscalls have no permission check.
 - **Taint tracking is coarse.** It is one sticky bit per process and per pipe that
   is never cleared. Only `unlink()` is checked; `link`, `mknod` and overwriting
   existing files are not. Taint does not flow through regular files. Any process
@@ -290,10 +303,11 @@ More detail is in [`agent/README.md`](agent/README.md#limitations).
    ```bash
    git fetch upstream && git switch -c feature/<topic> upstream/main
    ```
-3. Before opening a pull request, check that `make qemu-nox` boots and that
-   `python3 -m pytest agent/tests` passes.
-4. Choose a new syscall number above those already in use or reserved on open
-   branches (currently up to 27), to avoid merge clashes.
+3. Before opening a pull request, check that `make qemu-nox` boots in every
+   `SCHED_MODE`, that `edftest` passes, and that `python3 -m pytest agent/tests`
+   passes.
+4. Choose a new syscall number above those already in use (currently up to 27),
+   to avoid merge clashes.
 5. Never commit API keys. The LLM planner reads credentials only from the
    environment.
 
