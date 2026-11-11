@@ -2,9 +2,35 @@
 #include "stat.h"
 #include "user.h"
 
+// SCHED_MODE comes from the Makefile's CFLAGS; these mirror proc.h.
+#define SCHED_RR          0
+#define SCHED_EDF         1
+#define SCHED_EDF_DONATE  2
+#ifndef SCHED_MODE
+#define SCHED_MODE SCHED_RR
+#endif
+
+#define NO_DEADLINE 0
+
+// Expected effective deadline: the donated value when donation is
+// compiled in, otherwise the process's own deadline.
+#define EXPECT(donated, own) (SCHED_MODE == SCHED_EDF_DONATE ? (donated) : (own))
+
+// Work per progress mark: long enough to span at least one timer tick.
+#define BURN_CHUNK 8000000
+#define NMARK      12
+#define NORDER     6
+
+static int main_pid;
+static int failpipe[2];
+
+// A failing child also reports through failpipe so pass() fails the
+// scenario; otherwise only the parent's own assertions would count.
 #define ASSERT(cond, msg) do { \
   if (!(cond)) { \
     printf(1, "FAIL: %s (line %d)\n", msg, __LINE__); \
+    if (getpid() != main_pid) \
+      write(failpipe[1], "F", 1); \
     exit(); \
   } \
 } while(0)
@@ -18,150 +44,204 @@ burn_cpu(int iterations)
     dummy += i;
 }
 
-// 1. RR Compatibility Test
+// Start a scenario with no deadline, so nothing leaks between scenarios
+// (fork() copies the parent's deadline into every child).
+static void
+begin(char *name)
+{
+  printf(1, "%s... ", name);
+  setworkflow(0, NO_DEADLINE);
+}
+
+// Write a sentinel so the drain never blocks, then fail if any child
+// reported a failed assertion before it.
+static void
+pass(void)
+{
+  char ch;
+  int failed = 0;
+
+  write(failpipe[1], "S", 1);
+  while(read(failpipe[0], &ch, 1) == 1 && ch != 'S')
+    failed = 1;
+  if(failed){
+    printf(1, "FAIL: a child process failed an assertion\n");
+    exit();
+  }
+  printf(1, "PASS\n");
+}
+
+static void
+skip(char *reason)
+{
+  printf(1, "SKIP (%s)\n", reason);
+}
+
+// Run two equal-work CPU-bound children with the same deadline, released
+// together, each writing NMARK progress marks to a shared pipe. With
+// with_hog, a third child with an earlier deadline competes as well.
+// Returns 1 if both children made progress before either had done half
+// its work, i.e. they shared the CPU instead of running one after another.
+static int
+pair_interleaves(uint deadline, int with_hog)
+{
+  int marks[2], gun[2];
+  char buf[2*NMARK + 1];
+  char ch;
+  int i, k, n, nproc, seen_a, seen_b, seen_h;
+
+  pipe(marks);
+  pipe(gun);
+  nproc = with_hog ? 3 : 2;
+
+  for(k = 0; k < nproc; k++){
+    if(fork() == 0){
+      close(marks[0]);
+      close(gun[1]);
+      if(k == 2)
+        setworkflow(9, 1);  // hog: earliest possible deadline
+      else
+        setworkflow(k + 1, deadline);
+      read(gun[0], &ch, 1);
+      if(k == 2){
+        burn_cpu(BURN_CHUNK * NMARK);
+        write(marks[1], "H", 1);
+      } else {
+        for(i = 0; i < NMARK; i++){
+          burn_cpu(BURN_CHUNK);
+          write(marks[1], k ? "b" : "a", 1);
+        }
+      }
+      exit();
+    }
+  }
+  close(marks[1]);
+  close(gun[0]);
+
+  sleep(3);  // let every child set its deadline and block on the gun
+  write(gun[1], "ggg", nproc);
+
+  n = 0;
+  seen_h = 0;
+  while(n < 2*NMARK && read(marks[0], &ch, 1) == 1){
+    if(ch == 'H')
+      seen_h = 1;
+    else
+      buf[n++] = ch;
+  }
+  if(with_hog && !seen_h)
+    seen_h = read(marks[0], &ch, 1) == 1 && ch == 'H';
+
+  for(k = 0; k < nproc; k++)
+    wait();
+  close(marks[0]);
+  close(gun[1]);
+
+  ASSERT(n == 2*NMARK, "Every equal-priority task ran to completion");
+  ASSERT(!with_hog || seen_h, "Deadline task ran to completion");
+
+  seen_a = seen_b = 0;
+  for(i = 0; i < NMARK; i++){
+    if(buf[i] == 'a')
+      seen_a = 1;
+    if(buf[i] == 'b')
+      seen_b = 1;
+  }
+  return seen_a && seen_b;
+}
+
+// 1. Round-Robin time slicing between processes without deadlines.
+// In RR mode this is plain RR; in EDF modes it is the no-deadline fallback.
 void
 test_rr_compatibility(void)
 {
-  printf(1, "Scenario 1: Round-Robin Compatibility... ");
-  int p[2];
-  pipe(p);
-
-  int pid1 = fork();
-  if(pid1 == 0){
-    burn_cpu(5000000);
-    write(p[1], "A", 1);
-    exit();
-  }
-
-  int pid2 = fork();
-  if(pid2 == 0){
-    burn_cpu(5000000);
-    write(p[1], "B", 1);
-    exit();
-  }
-
-  char buf[2];
-  read(p[0], &buf[0], 1);
-  read(p[0], &buf[1], 1);
-  ASSERT((buf[0] == 'A' && buf[1] == 'B') || (buf[0] == 'B' && buf[1] == 'A'), "Both processes scheduled");
-
-  wait();
-  wait();
-  close(p[0]);
-  close(p[1]);
-  printf(1, "PASS\n");
+  begin("Scenario 1: Round-Robin Time Slicing (no deadlines)");
+  ASSERT(pair_interleaves(NO_DEADLINE, 0),
+         "Two no-deadline tasks must share the CPU, not run back to back");
+  pass();
 }
 
 // 2. EDF Scheduling Order Test
 void
 test_edf_order(void)
 {
-  printf(1, "Scenario 2: EDF Scheduling Order... ");
-  int order[2];
-  int start[2];
+  begin("Scenario 2: EDF Scheduling Order");
+  if(SCHED_MODE == SCHED_RR){
+    skip("needs SCHED_MODE >= 1");
+    return;
+  }
+
+  int order[2], gun[2];
+  int pos[NORDER];
+  uint base = uptime() + 1000;
+  char ch;
+  int i, k;
+
   pipe(order);
-  pipe(start);
+  pipe(gun);
 
-  // Late deadline (500)
-  int p1 = fork();
-  if(p1 == 0){
-    setworkflow(1, 500);
-    char ch;
-    read(start[0], &ch, 1); // Wait for starter gun
-    burn_cpu(30000000);
-    write(order[1], "L", 1);
-    exit();
+  // Fork the latest deadline first so fork order cannot fake EDF order.
+  for(k = NORDER - 1; k >= 0; k--){
+    if(fork() == 0){
+      setworkflow(k + 1, base + 100*k);
+      read(gun[0], &ch, 1);
+      burn_cpu(20000000);
+      ch = '0' + k;
+      write(order[1], &ch, 1);
+      exit();
+    }
   }
 
-  // Early deadline (100)
-  int p2 = fork();
-  if(p2 == 0){
-    setworkflow(2, 100);
-    char ch;
-    read(start[0], &ch, 1); // Wait for starter gun
-    burn_cpu(30000000);
-    write(order[1], "E", 1);
-    exit();
+  sleep(5);  // let every child set its deadline and block on the gun
+  write(gun[1], "gggggg", NORDER);
+
+  for(i = 0; i < NORDER; i++){
+    read(order[0], &ch, 1);
+    pos[ch - '0'] = i;
   }
+  for(i = 0; i < NORDER; i++)
+    wait();
 
-  // Let both children reach read(start[0]) and set their workflows
-  sleep(5);
+  // With c CPUs the c earliest deadlines run at once and finish in any
+  // order among themselves, so only require the earliest task in the first
+  // half and the latest in the second half. That holds for up to NORDER/2
+  // CPUs; on one CPU EDF finishes them strictly in deadline order.
+  ASSERT(pos[0] < NORDER/2, "Earliest-deadline task must finish in the first half");
+  ASSERT(pos[NORDER-1] >= NORDER/2, "Latest-deadline task must finish in the second half");
 
-  // Starter gun: release both processes simultaneously
-  write(start[1], "GO", 2);
-
-  char first, second;
-  read(order[0], &first, 1);
-  read(order[0], &second, 1);
-
-  ASSERT(first == 'E', "Process with earlier deadline (100) must finish before later deadline (500)");
-  ASSERT(second == 'L', "Process with later deadline (500) finishes second");
-
-  wait();
-  wait();
   close(order[0]);
   close(order[1]);
-  close(start[0]);
-  close(start[1]);
-  printf(1, "PASS\n");
+  close(gun[0]);
+  close(gun[1]);
+  pass();
 }
 
 // 3. Equal-Deadline Fairness Test
 void
 test_equal_fairness(void)
 {
-  printf(1, "Scenario 3: Equal-Deadline Fairness... ");
-  int p[2];
-  pipe(p);
-
-  int pid1 = fork();
-  if(pid1 == 0){
-    setworkflow(1, 200);
-    burn_cpu(10000000);
-    write(p[1], "1", 1);
-    exit();
-  }
-
-  int pid2 = fork();
-  if(pid2 == 0){
-    setworkflow(2, 200);
-    burn_cpu(10000000);
-    write(p[1], "2", 1);
-    exit();
-  }
-
-  char c1, c2;
-  read(p[0], &c1, 1);
-  read(p[0], &c2, 1);
-  ASSERT((c1 == '1' && c2 == '2') || (c1 == '2' && c2 == '1'), "Equal-deadline tasks both execute without starvation");
-
-  wait();
-  wait();
-  close(p[0]);
-  close(p[1]);
-  printf(1, "PASS\n");
+  begin("Scenario 3: Equal-Deadline Fairness");
+  ASSERT(pair_interleaves(uptime() + 1200, 0),
+         "Equal-deadline tasks must share the CPU (rotating tie-break)");
+  pass();
 }
 
-// 4. Execution of Processes Without Deadlines
+// 4. Processes without deadlines still run, and rotate among themselves,
+// while a deadline task competes with them.
 void
 test_no_deadline_exec(void)
 {
-  printf(1, "Scenario 4: Execution of Processes Without Deadlines... ");
-  int pid = fork();
-  if(pid == 0){
-    // Process without deadline
-    burn_cpu(5000000);
-    exit();
-  }
-  wait();
-  printf(1, "PASS\n");
+  begin("Scenario 4: Execution of Processes Without Deadlines");
+  ASSERT(pair_interleaves(NO_DEADLINE, 1),
+         "No-deadline tasks must share the CPU alongside a deadline task");
+  pass();
 }
 
 // 5. Basic Priority Donation
 void
 test_basic_donation(void)
 {
-  printf(1, "Scenario 5: Basic Priority Donation... ");
+  begin("Scenario 5: Basic Priority Donation");
   int p2c[2], c2p[2];
   pipe(p2c);
   pipe(c2p);
@@ -180,7 +260,7 @@ test_basic_donation(void)
     char ch;
     read(p2c[0], &ch, 1); // Wait for parent donation
     eff = get_effective_deadline(0);
-    ASSERT(eff == 100, "Child effective deadline lowered to donated 100");
+    ASSERT(eff == EXPECT(100, 500), "Child effective deadline lowered to donated 100");
 
     write(c2p[1], "V", 1); // Child verified
 
@@ -205,7 +285,7 @@ test_basic_donation(void)
   ASSERT(ret == 0, "set_waiting_on success");
 
   int child_eff = get_effective_deadline(child_pid);
-  ASSERT(child_eff == 100, "Target process effective deadline is 100");
+  ASSERT(child_eff == EXPECT(100, 500), "Target process effective deadline is 100");
 
   write(p2c[1], "D", 1);
   read(c2p[0], &ch, 1);
@@ -219,14 +299,14 @@ test_basic_donation(void)
   close(p2c[1]);
   close(c2p[0]);
   wait();
-  printf(1, "PASS\n");
+  pass();
 }
 
 // 6. Transitive Donation (Chain 4 -> 3 -> 2 -> 1)
 void
 test_transitive_donation(void)
 {
-  printf(1, "Scenario 6: Transitive Priority Donation (Stage 4->3->2->1)... ");
+  begin("Scenario 6: Transitive Priority Donation (Stage 4->3->2->1)");
   int pipes[3][2];
   for(int i = 0; i < 3; i++)
     pipe(pipes[i]);
@@ -247,7 +327,7 @@ test_transitive_donation(void)
   int pid2 = fork();
   if(pid2 == 0){
     setworkflow(2, 400);
-    set_waiting_on(pid1);
+    ASSERT(set_waiting_on(pid1) == 0, "Stage 2 waits on Stage 1");
     char ch;
     read(pipes[1][0], &ch, 1);
     clear_waiting_on();
@@ -258,7 +338,7 @@ test_transitive_donation(void)
   int pid3 = fork();
   if(pid3 == 0){
     setworkflow(3, 300);
-    set_waiting_on(pid2);
+    ASSERT(set_waiting_on(pid2) == 0, "Stage 3 waits on Stage 2");
     char ch;
     read(pipes[2][0], &ch, 1);
     clear_waiting_on();
@@ -269,7 +349,7 @@ test_transitive_donation(void)
   int pid4 = fork();
   if(pid4 == 0){
     setworkflow(4, 100);
-    set_waiting_on(pid3);
+    ASSERT(set_waiting_on(pid3) == 0, "Stage 4 waits on Stage 3");
     char ch;
     read(sync_p[0], &ch, 1);
     clear_waiting_on();
@@ -285,16 +365,21 @@ test_transitive_donation(void)
   int eff4 = get_effective_deadline(pid4);
 
   ASSERT(eff4 == 100, "Stage 4 eff == 100");
-  ASSERT(eff3 == 100, "Stage 3 eff == 100 (donated from 4)");
-  ASSERT(eff2 == 100, "Stage 2 eff == 100 (donated from 4 via 3)");
-  ASSERT(eff1 == 100, "Stage 1 eff == 100 (donated from 4 via 3 via 2)");
+  ASSERT(eff3 == EXPECT(100, 300), "Stage 3 eff == 100 (donated from 4)");
+  ASSERT(eff2 == EXPECT(100, 400), "Stage 2 eff == 100 (donated from 4 via 3)");
+  ASSERT(eff1 == EXPECT(100, 500), "Stage 1 eff == 100 (donated from 4 via 3 via 2)");
 
+  // Stage 4 leaves: Stage 3's own 300 must now be what flows down the chain.
   write(sync_p[1], "X", 1);
+  ASSERT(wait() == pid4, "Stage 4 exits first");
+  ASSERT(get_effective_deadline(pid2) == EXPECT(300, 400), "Stage 2 falls back to 300 from Stage 3");
+  ASSERT(get_effective_deadline(pid1) == EXPECT(300, 500), "Stage 1 falls back to 300 via Stage 2");
+
   write(pipes[2][1], "X", 1);
   write(pipes[1][1], "X", 1);
   write(pipes[0][1], "X", 1);
 
-  for(int i = 0; i < 4; i++)
+  for(int i = 0; i < 3; i++)
     wait();
 
   for(int i = 0; i < 3; i++){
@@ -304,14 +389,14 @@ test_transitive_donation(void)
   close(sync_p[0]);
   close(sync_p[1]);
 
-  printf(1, "PASS\n");
+  pass();
 }
 
 // 7. Donation Withdrawal Test
 void
 test_donation_withdrawal(void)
 {
-  printf(1, "Scenario 7: Safe Donation Withdrawal... ");
+  begin("Scenario 7: Safe Donation Withdrawal");
   int p2c[2], c2p[2];
   pipe(p2c);
   pipe(c2p);
@@ -339,8 +424,8 @@ test_donation_withdrawal(void)
   char ch;
   read(c2p[0], &ch, 1); // Wait until target is ready with deadline 450
 
-  set_waiting_on(target_pid);
-  ASSERT(get_effective_deadline(target_pid) == 120, "Donation applied");
+  ASSERT(set_waiting_on(target_pid) == 0, "set_waiting_on success");
+  ASSERT(get_effective_deadline(target_pid) == EXPECT(120, 450), "Donation applied");
 
   clear_waiting_on();
   ASSERT(get_effective_deadline(target_pid) == 450, "Donation cleanly withdrawn");
@@ -349,34 +434,36 @@ test_donation_withdrawal(void)
   wait();
   close(p2c[1]);
   close(c2p[0]);
-  printf(1, "PASS\n");
+  pass();
 }
 
 // 8. Multiple Donors Test
 void
 test_multiple_donors(void)
 {
-  printf(1, "Scenario 8: Multiple Donors (min selection and partial withdrawal)... ");
-  int sync1[2], sync2[2];
-  pipe(sync1);
-  pipe(sync2);
+  begin("Scenario 8: Multiple Donors (min selection and partial withdrawal)");
+  int hold[2], rel1[2], rel2[2];
+  pipe(hold);
+  pipe(rel1);
+  pipe(rel2);
 
   // Target process: deadline 500
   int target_pid = fork();
   if(target_pid == 0){
     setworkflow(1, 500);
     char ch;
-    read(sync1[0], &ch, 1);
+    read(hold[0], &ch, 1);
     exit();
   }
 
-  // Donor 1: deadline 200
+  // Donor 1: deadline 200. Each donor has its own release pipe so the
+  // test, not the scheduler, decides which one leaves first.
   int donor1_pid = fork();
   if(donor1_pid == 0){
     setworkflow(2, 200);
-    set_waiting_on(target_pid);
+    ASSERT(set_waiting_on(target_pid) == 0, "Donor 1 waits on target");
     char ch;
-    read(sync2[0], &ch, 1);
+    read(rel1[0], &ch, 1);
     clear_waiting_on();
     exit();
   }
@@ -385,111 +472,171 @@ test_multiple_donors(void)
   int donor2_pid = fork();
   if(donor2_pid == 0){
     setworkflow(3, 150);
-    set_waiting_on(target_pid);
+    ASSERT(set_waiting_on(target_pid) == 0, "Donor 2 waits on target");
     char ch;
-    read(sync2[0], &ch, 1);
+    read(rel2[0], &ch, 1);
     clear_waiting_on();
     exit();
   }
 
   sleep(5);
   int eff = get_effective_deadline(target_pid);
-  ASSERT(eff == 150, "Target receives minimum of multiple donors (min(200, 150) = 150)");
+  ASSERT(eff == EXPECT(150, 500), "Target receives minimum of multiple donors (min(200, 150) = 150)");
 
-  // Wake up donor 2 (earlier donor exits), donor 1 remains!
-  write(sync2[1], "X", 1);
-  sleep(5);
+  // Release donor 2 (the earlier deadline); donor 1 remains.
+  write(rel2[1], "X", 1);
+  ASSERT(wait() == donor2_pid, "Donor 2 exits");
 
   eff = get_effective_deadline(target_pid);
-  ASSERT(eff == 200, "After donor 2 leaves, target retains donor 1's deadline (200)");
+  ASSERT(eff == EXPECT(200, 500), "After donor 2 leaves, target retains donor 1's deadline (200)");
 
-  // Wake up donor 1 and target
-  write(sync2[1], "X", 1);
-  write(sync1[1], "X", 1);
+  write(rel1[1], "X", 1);
+  ASSERT(wait() == donor1_pid, "Donor 1 exits");
+  ASSERT(get_effective_deadline(target_pid) == 500, "With no donors left, target is back to 500");
 
+  write(hold[1], "X", 1);
   wait();
-  wait();
-  wait();
 
-  close(sync1[0]); close(sync1[1]);
-  close(sync2[0]); close(sync2[1]);
+  close(hold[0]); close(hold[1]);
+  close(rel1[0]); close(rel1[1]);
+  close(rel2[0]); close(rel2[1]);
 
-  printf(1, "PASS\n");
+  pass();
 }
 
 // 9. Process Termination and Cleanup
 void
 test_termination_cleanup(void)
 {
-  printf(1, "Scenario 9: Process Termination and Cleanup... ");
-  int p[2];
-  pipe(p);
+  begin("Scenario 9: Process Termination and Cleanup");
+  int hold[2], ready[2], go[2];
+  char ch;
+  pipe(hold);
+  pipe(ready);
+  pipe(go);
 
   int target_pid = fork();
   if(target_pid == 0){
     setworkflow(1, 500);
-    char ch;
-    read(p[0], &ch, 1);
+    read(hold[0], &ch, 1);
     exit();
   }
 
+  // Donor exits without an explicit clear_waiting_on.
   int donor_pid = fork();
   if(donor_pid == 0){
     setworkflow(2, 100);
-    set_waiting_on(target_pid);
-    // Exits without explicit clear_waiting_on
+    ASSERT(set_waiting_on(target_pid) == 0, "Donor waits on target");
+    write(ready[1], "R", 1);
+    read(go[0], &ch, 1);
     exit();
   }
 
-  wait(); // Wait for donor to exit and be reaped
-  sleep(3);
+  read(ready[0], &ch, 1);
+  ASSERT(get_effective_deadline(target_pid) == EXPECT(100, 500), "Donation applied before donor exit");
+
+  write(go[1], "X", 1);
+  ASSERT(wait() == donor_pid, "Donor exits and is reaped");
 
   int eff = get_effective_deadline(target_pid);
   ASSERT(eff == 500, "Target deadline restored to 500 on donor exit");
 
-  write(p[1], "X", 1);
+  // Owner exits while we still wait on it: our link must be dropped, so a
+  // new process (which may reuse the owner's slot) inherits no donation.
+  setworkflow(3, 100);
+  ASSERT(set_waiting_on(target_pid) == 0, "Parent waits on target");
+  write(hold[1], "X", 1);
+  ASSERT(wait() == target_pid, "Target exits and is reaped");
+
+  int fresh_pid = fork();
+  if(fresh_pid == 0){
+    setworkflow(4, 700);
+    write(ready[1], "R", 1);
+    read(go[0], &ch, 1);
+    exit();
+  }
+  read(ready[0], &ch, 1);
+  ASSERT(get_effective_deadline(fresh_pid) == 700, "New process inherits no stale donation");
+  write(go[1], "X", 1);
   wait();
-  close(p[0]);
-  close(p[1]);
-  printf(1, "PASS\n");
+  clear_waiting_on();
+
+  close(hold[0]); close(hold[1]);
+  close(ready[0]); close(ready[1]);
+  close(go[0]); close(go[1]);
+  pass();
 }
 
-// 10. Cyclic Dependency Handling
+// 10. Cyclic Dependency Handling: self, 2-cycle and 3-cycle.
 void
 test_cyclic_dependency(void)
 {
-  printf(1, "Scenario 10: Cyclic Dependency Rejection... ");
-  int p[2];
-  pipe(p);
+  begin("Scenario 10: Cyclic Dependency Rejection");
+  int ready[2], g1[2], g2[2];
+  char ch;
+  int ppid = getpid();
+  pipe(ready);
+  pipe(g1);
+  pipe(g2);
 
-  int child_pid = fork();
-  if(child_pid == 0){
-    int ppid = getpid() - 1;
-    char ch;
-    read(p[0], &ch, 1);
+  setworkflow(1, 100);
+  ASSERT(set_waiting_on(ppid) == -1, "Self-dependency must be rejected");
 
-    int ret = set_waiting_on(ppid);
-    ASSERT(ret == -1, "Cyclic dependency creation must return error (-1)");
+  int c2 = fork();
+  if(c2 == 0){
+    int c1;
+    setworkflow(3, 800);
+    write(ready[1], "R", 1);
+    read(g2[0], (char*)&c1, sizeof c1);
+    // Chain is now parent -> c1 -> c2.
+    ASSERT(set_waiting_on(ppid) == -1, "3-cycle (c2 -> parent) must be rejected");
+    ASSERT(set_waiting_on(c1) == -1, "2-cycle (c2 -> c1) must be rejected");
+    ASSERT(get_effective_deadline(0) == EXPECT(100, 800), "Rejected edges leave the chain intact");
+    write(ready[1], "D", 1);
     exit();
   }
 
-  int ret = set_waiting_on(child_pid);
-  ASSERT(ret == 0, "Parent set waiting on child");
+  int c1 = fork();
+  if(c1 == 0){
+    setworkflow(2, 700);
+    ASSERT(set_waiting_on(c2) == 0, "c1 waits on c2");
+    write(ready[1], "R", 1);
+    read(g1[0], &ch, 1);
+    ASSERT(set_waiting_on(ppid) == -1, "2-cycle (c1 -> parent) must be rejected");
+    write(ready[1], "D", 1);
+    read(g1[0], &ch, 1);
+    exit();
+  }
 
-  write(p[1], "G", 1);
+  read(ready[0], &ch, 1);
+  read(ready[0], &ch, 1);
+  ASSERT(set_waiting_on(c1) == 0, "Parent waits on c1");
+
+  write(g1[1], "G", 1);
+  read(ready[0], &ch, 1);
+  write(g2[1], (char*)&c1, sizeof c1);
+  read(ready[0], &ch, 1);
+
+  write(g1[1], "X", 1);
   wait();
-
+  wait();
   clear_waiting_on();
-  close(p[0]);
-  close(p[1]);
-  printf(1, "PASS\n");
+
+  close(ready[0]); close(ready[1]);
+  close(g1[0]); close(g1[1]);
+  close(g2[0]); close(g2[1]);
+  pass();
 }
 
 int
 main(void)
 {
+  main_pid = getpid();
+  pipe(failpipe);
+
   printf(1, "\n=======================================================\n");
   printf(1, "       xv6 EDF & Priority Donation Test Suite          \n");
+  printf(1, "       SCHED_MODE=%d                                    \n", SCHED_MODE);
   printf(1, "=======================================================\n\n");
 
   test_rr_compatibility();
@@ -504,7 +651,7 @@ main(void)
   test_cyclic_dependency();
 
   printf(1, "\n=======================================================\n");
-  printf(1, "       ALL 10 SCENARIOS PASSED SUCCESSFULLY!          \n");
+  printf(1, "       ALL SCENARIOS PASSED (skips noted above)        \n");
   printf(1, "=======================================================\n\n");
   exit();
 }
