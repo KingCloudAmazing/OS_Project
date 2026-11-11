@@ -104,6 +104,32 @@ sys_setworkflow(void)
 
   p->wid = wid;
   p->deadline = (uint)deadline_ticks;
+  proc_recompute_donations();
 
   return 0;
+}
+
+int
+sys_set_waiting_on(void)
+{
+  int target_pid;
+  if(argint(0, &target_pid) < 0)
+    return -1;
+  return proc_set_waiting_on_pid(target_pid);
+}
+
+int
+sys_clear_waiting_on(void)
+{
+  proc_clear_waiting_on(myproc());
+  return 0;
+}
+
+int
+sys_get_effective_deadline(void)
+{
+  int target_pid;
+  if(argint(0, &target_pid) < 0)
+    return -1;
+  return (int)proc_get_effective_deadline_pid(target_pid);
 }

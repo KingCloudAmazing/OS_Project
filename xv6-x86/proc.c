@@ -13,13 +13,16 @@ struct {
 } ptable;
 
 static struct proc *initproc;
+#if SCHED_MODE != SCHED_RR
 static int last_sched_idx = 0;
+#endif
 
 int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
+static void recompute_donations_locked(void);
 
 void
 pinit(void)
@@ -115,6 +118,8 @@ found:
 
   p->wid = 0;
   p->deadline = NO_DEADLINE;
+  p->donated_deadline = NO_DEADLINE;
+  p->waiting_on = 0;
 
   return p;
 }
@@ -205,6 +210,8 @@ fork(void)
   *np->tf = *curproc->tf;
   np->wid = curproc->wid;
   np->deadline = curproc->deadline;
+  np->donated_deadline = NO_DEADLINE;
+  np->waiting_on = 0;
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -318,11 +325,159 @@ wait(void)
 }
 
 //PAGEBREAK: 42
-// Calculate effective deadline of process p
+// Calculate effective deadline of process p.
+// min(own deadline, donated deadline).
+// Locking requirements: Caller must ensure safe access; holding ptable.lock
+// is required when reading or modifying state across other processes.
 uint
 proc_effective_deadline(struct proc *p)
 {
+  if(p == 0)
+    return NO_DEADLINE;
+
+#if SCHED_MODE == SCHED_EDF_DONATE
+  uint eff = p->deadline;
+  if(p->donated_deadline != NO_DEADLINE){
+    if(eff == NO_DEADLINE || p->donated_deadline < eff)
+      eff = p->donated_deadline;
+  }
+  return eff;
+#else
   return p->deadline;
+#endif
+}
+
+// Recompute donated deadlines across all processes in ptable.
+// Requires ptable.lock to be held.
+static void
+recompute_donations_locked(void)
+{
+  struct proc *p;
+  struct proc *w;
+
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == UNUSED)
+      continue;
+
+    uint min_donated = NO_DEADLINE;
+    for(w = ptable.proc; w < &ptable.proc[NPROC]; w++){
+      if(w->state == UNUSED || w->state == ZOMBIE)
+        continue;
+      if(w->waiting_on == p){
+        uint w_eff = proc_effective_deadline(w);
+        if(w_eff != NO_DEADLINE){
+          if(min_donated == NO_DEADLINE || w_eff < min_donated)
+            min_donated = w_eff;
+        }
+      }
+    }
+    p->donated_deadline = min_donated;
+  }
+}
+
+// Set dependency: waiter waits on owner.
+// Requires ptable.lock to be held.
+int
+proc_set_waiting_on_locked(struct proc *waiter, struct proc *owner)
+{
+  if(waiter == 0 || owner == 0 || waiter == owner)
+    return -1;
+  if(waiter->state == UNUSED || waiter->state == ZOMBIE)
+    return -1;
+  if(owner->state == UNUSED || owner->state == ZOMBIE)
+    return -1;
+
+  waiter->waiting_on = owner;
+  recompute_donations_locked();
+  return 0;
+}
+
+// Clear dependency: waiter no longer waits on anything.
+// Requires ptable.lock to be held.
+void
+proc_clear_waiting_on_locked(struct proc *waiter)
+{
+  if(waiter == 0)
+    return;
+
+  waiter->waiting_on = 0;
+  recompute_donations_locked();
+}
+
+// Public API for Person 3 and kernel modules:
+int
+proc_set_waiting_on(struct proc *waiter, struct proc *owner)
+{
+  int ret;
+  acquire(&ptable.lock);
+  ret = proc_set_waiting_on_locked(waiter, owner);
+  release(&ptable.lock);
+  return ret;
+}
+
+void
+proc_clear_waiting_on(struct proc *waiter)
+{
+  acquire(&ptable.lock);
+  proc_clear_waiting_on_locked(waiter);
+  release(&ptable.lock);
+}
+
+void
+proc_recompute_donations(void)
+{
+  acquire(&ptable.lock);
+  recompute_donations_locked();
+  release(&ptable.lock);
+}
+
+int
+proc_set_waiting_on_pid(int target_pid)
+{
+  struct proc *owner = 0;
+  struct proc *cur = myproc();
+  struct proc *p;
+  int ret;
+
+  if(target_pid <= 0)
+    return -1;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->pid == target_pid && p->state != UNUSED && p->state != ZOMBIE){
+      owner = p;
+      break;
+    }
+  }
+  if(owner == 0){
+    release(&ptable.lock);
+    return -1;
+  }
+
+  ret = proc_set_waiting_on_locked(cur, owner);
+  release(&ptable.lock);
+  return ret;
+}
+
+uint
+proc_get_effective_deadline_pid(int target_pid)
+{
+  struct proc *p;
+  uint eff = NO_DEADLINE;
+
+  acquire(&ptable.lock);
+  if(target_pid <= 0){
+    eff = proc_effective_deadline(myproc());
+  } else {
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->pid == target_pid && p->state != UNUSED){
+        eff = proc_effective_deadline(p);
+        break;
+      }
+    }
+  }
+  release(&ptable.lock);
+  return eff;
 }
 
 // Per-CPU process scheduler.
