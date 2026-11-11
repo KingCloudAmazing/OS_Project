@@ -1,0 +1,4 @@
+pexpect>=4.8
+pytest>=7
+# Optional, only for --planner llm:
+anthropic
