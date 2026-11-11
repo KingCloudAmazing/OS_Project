@@ -28,8 +28,20 @@ int main(int argc, char *argv[]) {
     int work_per_stage;
     int deadline_duration; // Target execution window in ticks
 
-    int start_tick, end_tick;
+    int start_tick = 0;
+    int end_tick;
     int pipes[MAX_STAGES - 1][2];
+
+    int stage;
+    int pid;
+    int read_fd;
+    int write_fd;
+    int created;
+    int j;
+    int hog_created = 0;
+
+    char token;
+    uint abs_deadline = 0;
     
 
     // Validate command-line argument count
@@ -57,20 +69,10 @@ int main(int argc, char *argv[]) {
     printf(1, "CPU Work per Stage: %d\n", work_per_stage);
     printf(1, "Deadline Duration: %d ticks\n", deadline_duration);
 
-    // Temporary restriction: execution is still four-stage.
-    if(stages != 4) {
-        printf(1, "Generic stage execution will be added in the next milestone.\n");
-        exit();
-    }
 
     printf(1, "Starting Pipeline Test Harness...\n");
 
-    // Initialize 3 unidirectional pipes
-    // if (pipe(p1) < 0 || pipe(p2) < 0 || pipe(p3) < 0) {
-    //     printf(1, "Error: Pipe creation failed\n");
-    //     exit();
-    // }
-
+    // Initialize n - 1 unidirectional pipes
     for(int i = 0; i < stages - 1; i++) {
         if(pipe(pipes[i]) < 0) {
             printf(1, "Pipe creation failed\n");
@@ -78,8 +80,17 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Spawn unrelated CPU hog
+    pid = fork();
+
+    if(pid < 0) {
+        printf(1, "Failed to create CPU hog\n");
+        close_unused_pipes(pipes, stages - 1, -1, -1);
+        exit();
+    }
+
     // Spawn CPU Hog Process (Unrelated background workload)
-    if (fork() == 0) {
+    if (pid == 0) {
         // CPU Hog has NO_DEADLINE by default
         close_unused_pipes(pipes, stages - 1, -1, -1);
         
@@ -87,93 +98,122 @@ int main(int argc, char *argv[]) {
         exit();
     }
 
+    hog_created = 1;
+
     // Spawn Stage 1 (Producer / Writer)
-    if (fork() == 0) {
-        // Close all unused pipe file descriptors
-        // close(p1[0]);
-        // close(p2[0]); close(p2[1]);
-        // close(p3[0]); close(p3[1]);
-
-        close_unused_pipes(pipes, stages - 1, -1, pipes[0][1]);
-
-        burn_cpu(work_per_stage);
-        char token = 'X';
-        write(pipes[0][1], &token, 1);
-        close(pipes[0][1]);
-        exit();
-    }
-
     // Spawn Stage 2 (Intermediate Worker)
-    if (fork() == 0) {
-        // close(p1[1]);
-        // close(p2[0]);
-        // close(p3[0]); close(p3[1]);
-        close_unused_pipes(pipes, stages - 1, pipes[0][0], pipes[1][1]);
-
-        char token;
-        read(pipes[0][0], &token, 1); // Blocks until Stage 1 writes
-        close(pipes[0][0]);
-
-        burn_cpu(work_per_stage);
-
-        write(pipes[1][1], &token, 1);
-        close(pipes[1][1]);
-        exit();
-    }
-
     // Spawn Stage 3 (Intermediate Worker)
-    if (fork() == 0) {
-        // close(p1[0]); close(p1[1]);
-        // close(p2[1]);
-        // close(p3[0]);
-        close_unused_pipes(pipes, stages - 1, pipes[1][0], pipes[2][1]);
-
-        char token;
-        read(pipes[1][0], &token, 1); // Blocks until Stage 2 writes
-        close(pipes[1][0]);
-
-        burn_cpu(work_per_stage);
-
-        write(pipes[2][1], &token, 1);
-        close(pipes[2][1]);
-        exit();
-    }
-
     // Spawn Stage 4 (Final Consumer / Reader with Deadline)
-    if (fork() == 0) {
-        // close(p1[0]); close(p1[1]);
-        // close(p2[0]); close(p2[1]);
-        // close(p3[1]);
-        close_unused_pipes(pipes, stages - 1, pipes[2][0], -1);
 
-        start_tick = uptime();
-        uint abs_deadline = start_tick + deadline_duration;
+    // Create pipeline stages in reverse order.
+    // This gives downstream readers an opportunity to block
+    // before upstream stages start producing data.
 
-        // Assign deadline (WID=1, absolute deadline tick)
-        setworkflow(1, abs_deadline);
+    // Establish one end-to-end deadline for the pipeline.
+    start_tick = uptime();
+    abs_deadline = start_tick + deadline_duration;
+    created = 0;
 
-        char token;
-        read(pipes[2][0], &token, 1); // Blocks until Stage 3 writes
-        close(pipes[2][0]);
+    for(stage = stages - 1; stage >= 0; stage--) {
 
-        burn_cpu(work_per_stage);
-        end_tick = uptime();
+        pid = fork();
 
-        int elapsed = end_tick - start_tick;
-        int missed = (end_tick > abs_deadline) ? 1 : 0;
+        if(pid < 0) {
+            printf(1, "Failed to create pipeline stage\n");
 
-        printf(1, "[METRICS] Start=%d | End=%d | Target=%d | Elapsed=%d | Missed=%d\n",
-               start_tick, end_tick, abs_deadline, elapsed, missed);
-        exit();
+            close_unused_pipes(pipes, stages - 1, -1, -1);
+
+            // Reap already-created stages and the CPU hog.
+            for(j = 0; j < created + hog_created; j++) {
+                wait();
+            }
+
+            exit();
+        }
+
+        if(pid == 0) {
+
+            // Determine which pipe ends this stage needs.
+            read_fd = -1;
+            write_fd = -1;
+
+            // Every stage except Stage 1 reads from the previous pipe.
+            if(stage > 0) {
+                read_fd = pipes[stage - 1][0];
+            }
+
+            // Every stage except the final stage writes to the next pipe.
+            if(stage < stages - 1) {
+                write_fd = pipes[stage][1];
+            }
+
+            // Close all descriptors that this stage does not need.
+            close_unused_pipes(
+                pipes,
+                stages - 1,
+                read_fd,
+                write_fd
+            );
+
+            // The final stage receives the workflow deadline.
+            if(stage == stages - 1) {
+                setworkflow(1, abs_deadline);
+            }
+
+            // Read data from the previous stage.
+            if(stage > 0) {
+
+                if(read(read_fd, &token, 1) != 1) {
+                    printf(1, "Stage %d: Read failed\n", stage + 1);
+                    exit();
+                }
+
+                close(read_fd);
+            }
+            else {
+                // First stage generates the initial token.
+                token = 'X';
+            }
+
+            printf(1, "Stage %d: Processing\n", stage + 1);
+
+            // Perform the stage's computational workload.
+            burn_cpu(work_per_stage);
+
+            // Forward the token to the next stage.
+            if(stage < stages - 1) {
+
+                if(write(write_fd, &token, 1) != 1) {
+                    printf(1, "Stage %d: Write failed\n", stage + 1);
+                    exit();
+                }
+
+                close(write_fd);
+            }
+
+            // Only the final stage reports completion metrics.
+            if(stage == stages - 1) {
+
+                end_tick = uptime();
+
+                int elapsed = end_tick - start_tick;
+                int missed = (end_tick > abs_deadline) ? 1 : 0;
+
+                printf(1,
+                    "[METRICS] Start=%d | End=%d | Target=%d | Elapsed=%d | Missed=%d\n",
+                    start_tick, end_tick, abs_deadline, elapsed, missed);
+            }
+
+            exit();
+        }
+
+        created++;
     }
 
     // Parent Process: Close all pipe descriptors and wait
-    // close(p1[0]); close(p1[1]);
-    // close(p2[0]); close(p2[1]);
-    // close(p3[0]); close(p3[1]);
     close_unused_pipes(pipes, stages - 1, -1, -1);
 
-    for (int i = 0; i < 5; i++) {
+    for(j = 0; j < stages + hog_created; j++) {
         wait();
     }
 
