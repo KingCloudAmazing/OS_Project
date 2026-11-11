@@ -332,6 +332,7 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
+#if SCHED_MODE == SCHED_RR
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->state != RUNNABLE)
         continue;
@@ -350,6 +351,22 @@ scheduler(void)
       // It should have changed its p->state before coming back.
       c->proc = 0;
     }
+#else
+    // Placeholder for SCHED_EDF and SCHED_EDF_DONATE (implemented in Phase 2)
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->state != RUNNABLE)
+        continue;
+
+      c->proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+
+      swtch(&(c->scheduler), p->context);
+      switchkvm();
+
+      c->proc = 0;
+    }
+#endif
     release(&ptable.lock);
 
   }
