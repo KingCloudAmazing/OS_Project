@@ -191,6 +191,7 @@ UPROGS=\
 	_mytest\
         _workflowtest\
 	_pipeline_test\
+	_edftest\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)

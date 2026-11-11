@@ -49,3 +49,46 @@ will need to install a cross-compiler gcc suite capable of producing
 x86 ELF binaries (see https://pdos.csail.mit.edu/6.828/).
 Then run "make TOOLPREFIX=i386-jos-elf-". Now install the QEMU PC
 simulator and run "make qemu".
+
+------------------------------------------------------------------------
+EDF SCHEDULER & PRIORITY DONATION (PERSON 2: ANHAD)
+------------------------------------------------------------------------
+
+1. SCHEDULER MODES:
+   - Mode 0 (SCHED_RR): Original Round-Robin scheduler (default).
+   - Mode 1 (SCHED_EDF): Earliest Deadline First without priority donation.
+   - Mode 2 (SCHED_EDF_DONATE): EDF with Transitive Priority Donation.
+
+2. BUILD COMMANDS:
+   - Round-Robin:
+     make clean && make SCHED_MODE=0
+   - EDF without donation:
+     make clean && make SCHED_MODE=1
+   - EDF with Priority Donation:
+     make clean && make SCHED_MODE=2
+   - Multiprocessor configuration:
+     make qemu-nox CPUS=1
+     make qemu-nox CPUS=3
+
+3. HOW EDF WORKS:
+   The scheduler inspects all RUNNABLE processes and prioritizes the
+   process with the earliest absolute deadline. Processes without deadlines
+   (NO_DEADLINE = 0) have lowest priority and are scheduled round-robin
+   when no deadline tasks are runnable. Ties among equal-deadline processes
+   are resolved using a rotating cursor to prevent starvation.
+
+4. HOW PRIORITY DONATION WORKS:
+   When a process A blocks waiting on process B, B temporarily inherits
+   A's effective deadline urgency:
+     D_effective(P) = min(D_own(P), D_donated(P))
+   Donations propagate transitively across dependency chains (e.g.,
+   Stage 4 -> Stage 3 -> Stage 2 -> Stage 1) via bounded relaxation.
+   Cycles are detected and rejected. Multiple donors are resolved by taking
+   the minimum deadline across all active donors, and donations are cleanly
+   recomputed upon dependency withdrawal, process exit, and reaping.
+
+5. HOW TO EXECUTE TESTS:
+   Within xv6 shell:
+     $ edftest
+     $ workflowtest
+     $ pipeline_test
