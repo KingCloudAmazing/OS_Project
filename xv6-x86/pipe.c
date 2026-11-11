@@ -17,6 +17,7 @@ struct pipe {
   uint nwrite;    // number of bytes written
   int readopen;   // read fd is still open
   int writeopen;  // write fd is still open
+  int writer_pid;
 };
 
 int
@@ -34,6 +35,8 @@ pipealloc(struct file **f0, struct file **f1)
   p->writeopen = 1;
   p->nwrite = 0;
   p->nread = 0;
+  p->writer_pid = 0;
+
   initlock(&p->lock, "pipe");
   (*f0)->type = FD_PIPE;
   (*f0)->readable = 1;
@@ -81,6 +84,10 @@ pipewrite(struct pipe *p, char *addr, int n)
   int i;
 
   acquire(&p->lock);
+
+  if(p->writer_pid == 0)
+    p->writer_pid = myproc()->pid;
+
   for(i = 0; i < n; i++){
     while(p->nwrite == p->nread + PIPESIZE){  //DOC: pipewrite-full
       if(p->readopen == 0 || myproc()->killed){
@@ -101,14 +108,39 @@ int
 piperead(struct pipe *p, char *addr, int n)
 {
   int i;
+  int owner_pid;
+  int waiting;
 
   acquire(&p->lock);
+  waiting = 0;
+
+
   while(p->nread == p->nwrite && p->writeopen){  //DOC: pipe-empty
     if(myproc()->killed){
+      if(waiting)
+        proc_clear_waiting_on(myproc());
+      
       release(&p->lock);
       return -1;
     }
+
+    owner_pid = p->writer_pid;
+
+    // Register the dependency only once for this blocking read.
+    if(!waiting && owner_pid > 0){
+      if(proc_set_waiting_on_pid(owner_pid) == 0)
+        waiting = 1;
+    }
+
     sleep(&p->nread, &p->lock); //DOC: piperead-sleep
+
+    owner_pid = p->writer_pid;
+
+    // Register the dependency only once for this blocking read.
+    if(!waiting && owner_pid > 0){
+      if(proc_set_waiting_on_pid(owner_pid) == 0)
+        waiting = 1;
+    }
   }
   for(i = 0; i < n; i++){  //DOC: piperead-copy
     if(p->nread == p->nwrite)
