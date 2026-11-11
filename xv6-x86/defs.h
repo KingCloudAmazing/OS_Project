@@ -112,12 +112,19 @@ struct cpu*     mycpu(void);
 struct proc*    myproc();
 void            pinit(void);
 void            procdump(void);
+// Priority donation API.  These take ptable.lock themselves: never call
+// them while holding ptable.lock (holding a pipe lock is fine, the same
+// order sleep() uses).  Call set before sleep() and clear after it returns.
+// From pipe code prefer proc_set_waiting_on_pid(owner_pid): the waiter is
+// myproc() and the owner is looked up by pid, so a stored struct proc*
+// whose slot was reaped and reused can never be targeted by mistake.
 uint            proc_effective_deadline(struct proc*);
 int             proc_set_waiting_on(struct proc*, struct proc*);
 void            proc_clear_waiting_on(struct proc*);
 void            proc_recompute_donations(void);
 int             proc_set_waiting_on_pid(int);
 uint            proc_get_effective_deadline_pid(int);
+void            proc_set_workflow(int, uint);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            setproc(struct proc*);
