@@ -191,6 +191,11 @@ sys_unlink(void)
 
   if(argstr(0, &path) < 0)
     return -1;
+  if(myproc()->tainted){
+    cprintf("taint: denied unlink(%s) by tainted pid %d (%s)\n",
+            path, myproc()->pid, myproc()->name);
+    return -1;
+  }
 
   begin_op();
   if((dp = nameiparent(path, name)) == 0){
@@ -440,5 +445,33 @@ sys_pipe(void)
   }
   fd[0] = fd0;
   fd[1] = fd1;
+  return 0;
+}
+
+// Mark a regular file as untrusted: any process that reads it becomes
+// tainted. Stored in the on-disk inode's minor field, unused for T_FILE.
+int
+sys_untrust(void)
+{
+  char *path;
+  struct inode *ip;
+
+  if(argstr(0, &path) < 0)
+    return -1;
+  begin_op();
+  if((ip = namei(path)) == 0){
+    end_op();
+    return -1;
+  }
+  ilock(ip);
+  if(ip->type != T_FILE){
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  ip->minor = UNTRUSTED;
+  iupdate(ip);
+  iunlockput(ip);
+  end_op();
   return 0;
 }

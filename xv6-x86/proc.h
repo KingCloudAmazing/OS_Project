@@ -51,6 +51,7 @@ struct proc {
   char name[16];               // Process name (debugging)
   int wid;
   uint deadline;
+  int tainted;                 // Has read untrusted data (see sys_untrust)
 };
 
 // Process memory is laid out contiguously, low addresses first:

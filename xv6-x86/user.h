@@ -24,6 +24,7 @@ char* sbrk(int);
 int sleep(int);
 int uptime(void);
 int setworkflow(int wid, int deadline_ticks);
+int untrust(char*);
 
 // ulib.c
 int stat(const char*, struct stat*);

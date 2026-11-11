@@ -209,6 +209,7 @@ fork(void)
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+  np->tainted = curproc->tainted;
 
   pid = np->pid;
 
