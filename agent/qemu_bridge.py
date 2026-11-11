@@ -42,8 +42,8 @@ class QemuBridge:
                                         encoding="utf-8", codec_errors="replace")
         except pexpect.ExceptionPexpect as e:
             raise BridgeError(f"cannot start QEMU: {e}") from e
-        self._expect(re.compile(r"init: starting sh\r*\n\$ "), self.boot_timeout,
-                     "xv6 did not boot to a shell prompt")
+        self.boot_log = self._expect(re.compile(r"init: starting sh\r*\n\$ "), self.boot_timeout,
+                                     "xv6 did not boot to a shell prompt").replace("\r", "")
 
     def execute(self, argv, timeout=None):
         """Run one guest command given as a token list; return {"ok", "output"}."""
