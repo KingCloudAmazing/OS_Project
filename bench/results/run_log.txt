@@ -1,0 +1,138 @@
+== CPUS=1 SCHED_MODE=0 (RR)
+  CPUS=1 RR              run  1: elapsed=12 missed=1
+  CPUS=1 RR              run  2: elapsed=14 missed=1
+  CPUS=1 RR              run  3: elapsed=14 missed=1
+  CPUS=1 RR              run  4: elapsed=12 missed=1
+  CPUS=1 RR              run  5: elapsed=12 missed=1
+  CPUS=1 RR              run  6: elapsed=12 missed=1
+  CPUS=1 RR              run  7: elapsed=12 missed=1
+  CPUS=1 RR              run  8: elapsed=14 missed=1
+  CPUS=1 RR              run  9: elapsed=14 missed=1
+  CPUS=1 RR              run 10: elapsed=12 missed=1
+  CPUS=1 RR              run 11: elapsed=12 missed=1
+  CPUS=1 RR              run 12: elapsed=12 missed=1
+  CPUS=1 RR              run 13: elapsed=14 missed=1
+  CPUS=1 RR              run 14: elapsed=12 missed=1
+  CPUS=1 RR              run 15: elapsed=12 missed=1
+  CPUS=1 RR              run 16: elapsed=14 missed=1
+  CPUS=1 RR              run 17: elapsed=14 missed=1
+  CPUS=1 RR              run 18: elapsed=14 missed=1
+  CPUS=1 RR              run 19: elapsed=12 missed=1
+  CPUS=1 RR              run 20: elapsed=12 missed=1
+== CPUS=1 SCHED_MODE=1 (EDF)
+  CPUS=1 EDF             run  1: elapsed=10 missed=0
+  CPUS=1 EDF             run  2: elapsed=10 missed=0
+  CPUS=1 EDF             run  3: elapsed=10 missed=0
+  CPUS=1 EDF             run  4: elapsed=11 missed=0
+  CPUS=1 EDF             run  5: elapsed=10 missed=0
+  CPUS=1 EDF             run  6: elapsed=12 missed=1
+  CPUS=1 EDF             run  7: elapsed=10 missed=0
+  CPUS=1 EDF             run  8: elapsed=10 missed=0
+  CPUS=1 EDF             run  9: elapsed=10 missed=0
+  CPUS=1 EDF             run 10: elapsed=12 missed=1
+  CPUS=1 EDF             run 11: elapsed=10 missed=0
+  CPUS=1 EDF             run 12: elapsed=10 missed=0
+  CPUS=1 EDF             run 13: elapsed=12 missed=1
+  CPUS=1 EDF             run 14: elapsed=12 missed=1
+  CPUS=1 EDF             run 15: elapsed=10 missed=0
+  CPUS=1 EDF             run 16: elapsed=10 missed=0
+  CPUS=1 EDF             run 17: elapsed=10 missed=0
+  CPUS=1 EDF             run 18: elapsed=10 missed=0
+  CPUS=1 EDF             run 19: elapsed=12 missed=1
+  CPUS=1 EDF             run 20: elapsed=12 missed=1
+== CPUS=1 SCHED_MODE=2 (EDF + Donation)
+  CPUS=1 EDF + Donation  run  1: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run  2: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run  3: elapsed=7 missed=0
+  CPUS=1 EDF + Donation  run  4: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run  5: elapsed=7 missed=0
+  CPUS=1 EDF + Donation  run  6: elapsed=7 missed=0
+  CPUS=1 EDF + Donation  run  7: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run  8: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run  9: elapsed=7 missed=0
+  CPUS=1 EDF + Donation  run 10: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run 11: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run 12: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run 13: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run 14: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run 15: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run 16: elapsed=6 missed=0
+  CPUS=1 EDF + Donation  run 17: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run 18: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run 19: elapsed=5 missed=0
+  CPUS=1 EDF + Donation  run 20: elapsed=7 missed=0
+== CPUS=3 SCHED_MODE=0 (RR)
+  CPUS=3 RR              run  1: elapsed=6 missed=0
+  CPUS=3 RR              run  2: elapsed=6 missed=0
+  CPUS=3 RR              run  3: elapsed=6 missed=0
+  CPUS=3 RR              run  4: elapsed=7 missed=0
+  CPUS=3 RR              run  5: elapsed=6 missed=0
+  CPUS=3 RR              run  6: elapsed=6 missed=0
+  CPUS=3 RR              run  7: elapsed=6 missed=0
+  CPUS=3 RR              run  8: elapsed=6 missed=0
+  CPUS=3 RR              run  9: elapsed=6 missed=0
+  CPUS=3 RR              run 10: elapsed=6 missed=0
+  CPUS=3 RR              run 11: elapsed=6 missed=0
+  CPUS=3 RR              run 12: elapsed=5 missed=0
+  CPUS=3 RR              run 13: elapsed=6 missed=0
+  CPUS=3 RR              run 14: elapsed=6 missed=0
+  CPUS=3 RR              run 15: elapsed=6 missed=0
+  CPUS=3 RR              run 16: elapsed=6 missed=0
+  CPUS=3 RR              run 17: elapsed=5 missed=0
+  CPUS=3 RR              run 18: elapsed=6 missed=0
+  CPUS=3 RR              run 19: elapsed=6 missed=0
+  CPUS=3 RR              run 20: elapsed=6 missed=0
+== CPUS=3 SCHED_MODE=1 (EDF)
+  CPUS=3 EDF             run  1: elapsed=6 missed=0
+  CPUS=3 EDF             run  2: elapsed=6 missed=0
+  CPUS=3 EDF             run  3: elapsed=6 missed=0
+  CPUS=3 EDF             run  4: elapsed=6 missed=0
+  CPUS=3 EDF             run  5: elapsed=6 missed=0
+  CPUS=3 EDF             run  6: elapsed=6 missed=0
+  CPUS=3 EDF             run  7: elapsed=6 missed=0
+  CPUS=3 EDF             run  8: elapsed=6 missed=0
+  CPUS=3 EDF             run  9: elapsed=6 missed=0
+  CPUS=3 EDF             run 10: elapsed=6 missed=0
+  CPUS=3 EDF             run 11: elapsed=6 missed=0
+  CPUS=3 EDF             run 12: elapsed=7 missed=0
+  CPUS=3 EDF             run 13: elapsed=6 missed=0
+  CPUS=3 EDF             run 14: elapsed=6 missed=0
+  CPUS=3 EDF             run 15: elapsed=6 missed=0
+  CPUS=3 EDF             run 16: elapsed=6 missed=0
+  CPUS=3 EDF             run 17: elapsed=6 missed=0
+  CPUS=3 EDF             run 18: elapsed=6 missed=0
+  CPUS=3 EDF             run 19: elapsed=6 missed=0
+  CPUS=3 EDF             run 20: elapsed=6 missed=0
+== CPUS=3 SCHED_MODE=2 (EDF + Donation)
+  CPUS=3 EDF + Donation  run  1: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run  2: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run  3: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run  4: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run  5: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run  6: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run  7: elapsed=7 missed=0
+  CPUS=3 EDF + Donation  run  8: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run  9: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 10: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 11: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 12: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 13: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 14: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 15: elapsed=5 missed=0
+  CPUS=3 EDF + Donation  run 16: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 17: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 18: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 19: elapsed=6 missed=0
+  CPUS=3 EDF + Donation  run 20: elapsed=6 missed=0
+Deadline: 11 ticks after the pipeline starts. Times are in xv6 timer ticks.
+
+| Scheduler | CPUs | Runs | Misses | Miss rate | Average execution time | Std dev | Min | Max |
+|---|---|---|---|---|---|---|---|---|
+| RR | 1 | 20 | 20 | 100% | 12.80 | 0.98 | 12 | 14 |
+| EDF | 1 | 20 | 6 | 30% | 10.65 | 0.91 | 10 | 12 |
+| EDF + Donation | 1 | 20 | 0 | 0% | 5.55 | 0.86 | 5 | 7 |
+| RR | 3 | 20 | 0 | 0% | 5.95 | 0.38 | 5 | 7 |
+| EDF | 3 | 20 | 0 | 0% | 6.05 | 0.22 | 6 | 7 |
+| EDF + Donation | 3 | 20 | 0 | 0% | 6.00 | 0.32 | 5 | 7 |
+wrote bench/results/miss_rate.png
+wrote bench/results/exec_time.png
