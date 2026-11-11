@@ -96,10 +96,10 @@ sys_setworkflow(void)
   int deadline_ticks;
   struct proc *p = myproc();
 
-  argint(0, &wid);
-  argint(1, &deadline_ticks);
+  if(argint(0, &wid) < 0 || argint(1, &deadline_ticks) < 0)
+    return -1;
 
-  if (wid < 0)
+  if(wid < 0 || deadline_ticks < 0)
     return -1;
 
   p->wid = wid;
