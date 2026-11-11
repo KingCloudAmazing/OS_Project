@@ -94,21 +94,20 @@ sys_setworkflow(void)
 {
   int wid;
   int deadline_ticks;
-  struct proc *p = myproc();
 
-  argint(0, &wid);
-  argint(1, &deadline_ticks);
-
-  if (wid < 0)
+  if(argint(0, &wid) < 0 || argint(1, &deadline_ticks) < 0)
     return -1;
 
-  p->wid = wid;
-  p->deadline = (uint)deadline_ticks;
-  proc_recompute_donations();
+  if (wid < 0 || deadline_ticks < 0)
+    return -1;
+
+  proc_set_workflow(wid, (uint)deadline_ticks);
 
   return 0;
 }
 
+// Test hooks for edftest: let user programs declare dependencies directly.
+// There is no permission check, so any process can donate to any pid.
 int
 sys_set_waiting_on(void)
 {

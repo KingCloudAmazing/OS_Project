@@ -402,16 +402,24 @@ recompute_donations_locked(void)
   }
 }
 
+// A process can take part in a dependency only once fork() has finished
+// creating it (not EMBRYO) and until it exits (not ZOMBIE).  An EMBRYO
+// slot can return to UNUSED if fork() fails, which would leave a waiter
+// pointing at a slot that gets reused by an unrelated process.
+static int
+proc_is_live(struct proc *p)
+{
+  return p->state == SLEEPING || p->state == RUNNABLE || p->state == RUNNING;
+}
+
 // Set dependency: waiter waits on owner.
 // Requires ptable.lock to be held.
-int
+static int
 proc_set_waiting_on_locked(struct proc *waiter, struct proc *owner)
 {
   if(waiter == 0 || owner == 0 || waiter == owner)
     return -1;
-  if(waiter->state == UNUSED || waiter->state == ZOMBIE)
-    return -1;
-  if(owner->state == UNUSED || owner->state == ZOMBIE)
+  if(!proc_is_live(waiter) || !proc_is_live(owner))
     return -1;
 
   // Cycle detection: traverse owner's waiting_on dependency chain
@@ -431,7 +439,7 @@ proc_set_waiting_on_locked(struct proc *waiter, struct proc *owner)
 
 // Clear dependency: waiter no longer waits on anything.
 // Requires ptable.lock to be held.
-void
+static void
 proc_clear_waiting_on_locked(struct proc *waiter)
 {
   if(waiter == 0)
@@ -464,6 +472,20 @@ void
 proc_recompute_donations(void)
 {
   acquire(&ptable.lock);
+  recompute_donations_locked();
+  release(&ptable.lock);
+}
+
+// Set the current process's workflow id and deadline, then propagate the
+// new deadline to every process it donates to.
+void
+proc_set_workflow(int wid, uint deadline)
+{
+  struct proc *p = myproc();
+
+  acquire(&ptable.lock);
+  p->wid = wid;
+  p->deadline = deadline;
   recompute_donations_locked();
   release(&ptable.lock);
 }

@@ -97,6 +97,10 @@ endif
 SCHED_MODE ?= 0
 CFLAGS += -DSCHED_MODE=$(SCHED_MODE)
 
+# Rewrite .sched_mode only when the mode changes, and make every object
+# depend on it, so switching SCHED_MODE rebuilds without "make clean".
+$(shell echo $(SCHED_MODE) | cmp -s - .sched_mode || echo $(SCHED_MODE) > .sched_mode)
+
 xv6.img: bootblock kernel
 	dd if=/dev/zero of=xv6.img count=10000
 	dd if=bootblock of=xv6.img conv=notrunc
@@ -198,11 +202,13 @@ fs.img: mkfs README $(UPROGS)
 
 -include *.d
 
-clean: 
+$(OBJS) entry.o $(ULIB) $(patsubst _%,%.o,$(UPROGS)): .sched_mode
+
+clean:
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 	*.o *.d *.asm *.sym vectors.S bootblock entryother \
 	initcode initcode.out kernel xv6.img fs.img kernelmemfs \
-	xv6memfs.img mkfs .gdbinit \
+	xv6memfs.img mkfs .gdbinit .sched_mode \
 	$(UPROGS)
 
 # make a printout
