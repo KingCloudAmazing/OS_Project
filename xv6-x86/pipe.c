@@ -126,22 +126,25 @@ piperead(struct pipe *p, char *addr, int n)
 
     owner_pid = p->writer_pid;
 
-    // Register the dependency only once for this blocking read.
-    if(!waiting && owner_pid > 0){
+    // Register the dependency only once for this blocking read, and only
+    // if the reader has no dependency yet: a process has one waiting_on
+    // slot, and overwriting it would silently drop an existing donation.
+    // Only this process or its owner's exit() writes the field, so reading
+    // it without ptable.lock is safe.
+    if(!waiting && owner_pid > 0 && myproc()->waiting_on == 0){
       if(proc_set_waiting_on_pid(owner_pid) == 0)
         waiting = 1;
     }
 
+    // Re-checked at the top of the loop if we wake and the pipe is still
+    // empty, so there is no need to register again after sleep().
     sleep(&p->nread, &p->lock); //DOC: piperead-sleep
-
-    owner_pid = p->writer_pid;
-
-    // Register the dependency only once for this blocking read.
-    if(!waiting && owner_pid > 0){
-      if(proc_set_waiting_on_pid(owner_pid) == 0)
-        waiting = 1;
-    }
   }
+
+  // Data arrived (or the writer closed): withdraw the donation we added.
+  if(waiting)
+    proc_clear_waiting_on(myproc());
+
   for(i = 0; i < n; i++){  //DOC: piperead-copy
     if(p->nread == p->nwrite)
       break;
