@@ -239,7 +239,11 @@ QEMUGDB = $(shell if $(QEMU) -help | grep -q '^-gdb'; \
 ifndef CPUS
 CPUS := 2
 endif
-QEMUOPTS = -drive file=fs.img,index=1,media=disk,format=raw -drive file=xv6.img,index=0,media=disk,format=raw -smp $(CPUS) -m 512 $(QEMUEXTRA)
+# On QEMU's pc-i440fx-6.2 and newer machine types, the BIOS MP table that xv6
+# reads lists only one CPU, so xv6 ignores CPUS. Pin the newest machine type that
+# lists them all, when this QEMU has it (older QEMUs' defaults already work).
+QEMUMACHINE = $(shell $(QEMU) -machine help 2>/dev/null | grep -q '^pc-i440fx-6.1 ' && echo "-machine pc-i440fx-6.1")
+QEMUOPTS = -drive file=fs.img,index=1,media=disk,format=raw -drive file=xv6.img,index=0,media=disk,format=raw -smp $(CPUS) -m 512 $(QEMUMACHINE) $(QEMUEXTRA)
 
 qemu: fs.img xv6.img
 	$(QEMU) -serial mon:stdio $(QEMUOPTS)

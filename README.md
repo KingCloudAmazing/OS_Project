@@ -65,6 +65,7 @@ flowchart LR
 ```
 OS_Project/
 ├── README.md              <- this file
+├── bench/                 <- scheduler experiment: harness, results, graphs
 ├── agent/                 <- host-side Python agent (has its own README)
 │   ├── agent.py           CLI and agent loop
 │   ├── planner.py         rule-based, injection-test and LLM planners
@@ -185,6 +186,15 @@ pipeline's time:
 |---|---|
 | `SCHED_MODE=0` | `[METRICS] Start=10 \| End=22 \| Target=210 \| Elapsed=12 \| Missed=0` |
 | `SCHED_MODE=2` | `[METRICS] Start=10 \| End=15 \| Target=210 \| Elapsed=5 \| Missed=0` |
+
+**Scheduler experiment** ([`bench/`](bench/README.md)): 20 runs per scheduler on 1
+and 3 CPUs, with an 11-tick deadline. On 1 CPU, RR missed the deadline in 100% of
+runs, EDF in 30% and EDF + Donation in **0%**. On 3 CPUs, no scheduler missed,
+because the pipeline never has to compete with the CPU hog for a CPU.
+
+> On QEMU's newer machine types (`pc-i440fx-6.2`+), xv6 sees only one CPU whatever
+> `CPUS=` says. The Makefile works around this by pinning `-machine pc-i440fx-6.1`
+> when the installed QEMU has it, so `make qemu-nox CPUS=3` really boots 3 CPUs.
 
 ### 3. AI agent
 
