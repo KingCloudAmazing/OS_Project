@@ -10,6 +10,8 @@ struct file {
 
 
 // in-memory copy of an inode
+#define UNTRUSTED 1
+
 struct inode {
   uint dev;           // Device number
   uint inum;          // Inode number
@@ -19,7 +21,7 @@ struct inode {
 
   short type;         // copy of disk inode
   short major;
-  short minor;
+  short minor;                 // For T_FILE: UNTRUSTED marks taint-source files
   short nlink;
   uint size;
   uint addrs[NDIRECT+1];

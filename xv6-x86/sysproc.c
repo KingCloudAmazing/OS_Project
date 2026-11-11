@@ -104,6 +104,6 @@ sys_setworkflow(void)
 
   p->wid = wid;
   p->deadline = (uint)deadline_ticks;
-
+  cprintf("setworkflow: pid=%d wid=%d deadline=%d\n", p->pid, p->wid, p->deadline);
   return 0;
 }

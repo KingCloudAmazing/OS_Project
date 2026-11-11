@@ -1,0 +1,19 @@
+$ tainttest
+PASS: untainted process may unlink
+PASS: inbox.txt marked untrusted
+PASS: reading a trusted file does not taint
+taint: denied unlink(important.txt) by tainted pid 5 (tainttest)
+PASS: tainted process cannot unlink important.txt
+PASS: tainted process can still read files
+PASS: tainted process can still create files
+taint: denied unlink(important.txt) by tainted pid 6 (tainttest)
+PASS: taint is inherited across fork
+taint: denied unlink(important.txt) by tainted pid 7 (tainttest)
+PASS: taint propagates through a pipe
+PASS: important.txt still exists
+PASS: untainted parent may still unlink
+tainttest done
+$ ls /important.txt
+important.txt  2 5 46
+$ cat /important.txt
+This file must never be deleted by the agent.
