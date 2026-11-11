@@ -138,8 +138,8 @@ int setworkflow(int wid, int deadline_ticks);
 
 This records a **workflow ID** and a **deadline** (in timer ticks) in the calling
 process's `struct proc` (`wid`, `deadline`), so a scheduler can later favour
-processes with earlier deadlines. It returns `0` on success and `-1` if `wid` is
-negative. It is syscall number 23, wired through `syscall.h`, `syscall.c`,
+processes with earlier deadlines. It returns `0` on success, and `-1` if an
+argument can't be read or if `wid` or the deadline is negative. It is syscall number 23, wired through `syscall.h`, `syscall.c`,
 `user.h` and `usys.S`. For debugging, each call prints a kernel log line.
 
 ```
@@ -148,6 +148,8 @@ setworkflow: pid=4 wid=1 deadline=200
 setworkflow(1, 200) = 0
 setworkflow: pid=4 wid=2 deadline=150
 setworkflow(2, 150) = 0
+setworkflow(-1, 100) = -1 (expect -1)
+setworkflow(3, -5) = -1 (expect -1)
 ```
 
 ### 2. Pipeline workload test
@@ -263,7 +265,7 @@ Sample output is in [`agent/logs/`](agent/logs/).
 ## Known limitations
 
 - **setworkflow:** `wid` and `deadline` are not reset when a process slot is reused
-  or copied on `fork()`, and negative deadlines are not rejected. Process lifecycle
+  or copied on `fork()`. Process lifecycle
   handling is planned together with the scheduler work.
 - **Taint tracking is coarse.** It is one sticky bit per process and per pipe that
   is never cleared. Only `unlink()` is checked; `link`, `mknod` and overwriting
