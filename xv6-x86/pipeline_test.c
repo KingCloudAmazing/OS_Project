@@ -159,7 +159,16 @@ int main(int argc, char *argv[]) {
             if(stage == stages - 1) {
                 setworkflow(1, abs_deadline);
             }
-
+            
+            // Announce this stage as the writer of its output pipe.
+            // A zero-length write transfers no data but records writer_pid.
+            if(stage < stages - 1) {
+                if(write(write_fd, &token, 0) < 0) {
+                    printf(1, "Stage %d: Writer registration failed\n",
+                        stage + 1);
+                    exit();
+                }
+            }
             // Read data from the previous stage.
             if(stage > 0) {
 

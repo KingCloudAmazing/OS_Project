@@ -132,8 +132,11 @@ piperead(struct pipe *p, char *addr, int n)
     // Only this process or its owner's exit() writes the field, so reading
     // it without ptable.lock is safe.
     if(!waiting && owner_pid > 0 && myproc()->waiting_on == 0){
-      if(proc_set_waiting_on_pid(owner_pid) == 0)
+      if(proc_set_waiting_on_pid(owner_pid) == 0){
         waiting = 1;
+      
+        cprintf("[PIPE DONATION] Reader %d -> Writer %d\n", myproc()->pid, owner_pid);
+      }
     }
 
     // Re-checked at the top of the loop if we wake and the pipe is still
